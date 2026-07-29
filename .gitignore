@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 .env
+*.zip
 backend/.env
 backend/vendor/
 backend/storage/*.key
