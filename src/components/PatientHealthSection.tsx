@@ -36,7 +36,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { DietMeal, DietPlan, MealType, useDietPlans, useHealthSummary, useVitals } from "@/hooks/useHealth";
+import { DietMeal, DietPlan, HealthGoal, MealType, useDietPlans, useHealthSummary, useVitals } from "@/hooks/useHealth";
+import { CaregiverGoalsPanel } from "@/components/HealthGoalsSection";
 
 function statusBadgeClass(status?: string | null) {
   switch (status) {
@@ -139,7 +140,7 @@ export function HealthSummaryWidget({ onOpenVitals, onOpenDiet }: { onOpenVitals
   );
 }
 
-export function PatientVitalsTab() {
+export function PatientVitalsTab({ onGoalsAchieved }: { onGoalsAchieved?: (goals: HealthGoal[]) => void } = {}) {
   const { latest, entries, chartData, loading, logVitals, deleteEntry } = useVitals();
   const [form, setForm] = useState({
     systolic: "",
@@ -190,6 +191,10 @@ export function PatientVitalsTab() {
         duration: 7000,
       });
     });
+
+    if (data.achieved_goals?.length) {
+      onGoalsAchieved?.(data.achieved_goals);
+    }
   };
 
   return (
@@ -751,7 +756,7 @@ export function PatientDietTab() {
   );
 }
 
-export function CaregiverHealthPanel({ patientName, patientId }: { patientName: string; patientId: string }) {
+export function CaregiverHealthPanel({ patientName, patientId, canManageGoals = false }: { patientName: string; patientId: string; canManageGoals?: boolean }) {
   const { latest, chartData } = useVitals(patientId);
   const { activePlan, history } = useDietPlans(patientId);
   const criticalMessage =
@@ -879,6 +884,8 @@ export function CaregiverHealthPanel({ patientName, patientId }: { patientName: 
           ))}
         </CardContent>
       </Card>
+
+      <CaregiverGoalsPanel patientId={patientId} readOnly={!canManageGoals} />
     </div>
   );
 }

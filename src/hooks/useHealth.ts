@@ -97,6 +97,47 @@ export interface DietAdherenceSummary {
   }>;
 }
 
+export type HealthGoalType =
+  | "bp_systolic"
+  | "bp_diastolic"
+  | "blood_sugar"
+  | "weight"
+  | "heart_rate"
+  | "medication_adherence"
+  | "diet_adherence"
+  | "water_intake";
+
+export type GoalDirection = "below" | "above" | "exact";
+export type GoalStatus = "on_track" | "needs_attention" | "achieved";
+
+export interface HealthGoal {
+  id: string;
+  user_id: string;
+  goal_type: HealthGoalType;
+  goal_label: string;
+  target_value: number;
+  target_direction: GoalDirection;
+  current_value: number | null;
+  progress_percentage: number;
+  status: GoalStatus;
+  start_date: string;
+  target_date: string | null;
+  days_remaining: number | null;
+  is_achieved: boolean;
+  achieved_at: string | null;
+  is_active: boolean;
+  created_at: string;
+  trend: Array<{
+    date: string;
+    value: number | null;
+  }>;
+}
+
+interface GoalsResponse {
+  active: HealthGoal[];
+  achieved: HealthGoal[];
+}
+
 export interface HealthSummary {
   vitals: VitalEntry | null;
   diet_today: {
@@ -174,7 +215,7 @@ export function useVitals(patientId?: string) {
       notes?: string;
     }) => {
       const response = await apiClient.request<{
-        data: (VitalEntry & { alerts?: HealthAlert[] }) | null;
+        data: (VitalEntry & { alerts?: HealthAlert[]; achieved_goals?: HealthGoal[] }) | null;
         error: { message?: string } | null;
       }>("/vitals/log", {
         method: "POST",
@@ -359,6 +400,111 @@ export function useDietPlans(patientId?: string) {
     savePlan,
     deactivatePlan,
     logMeal,
+  };
+}
+
+export function useHealthGoals(patientId?: string) {
+  const { user } = useAuth();
+  const [activeGoals, setActiveGoals] = useState<HealthGoal[]>([]);
+  const [achievedGoals, setAchievedGoals] = useState<HealthGoal[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchGoals = useCallback(async () => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    const response = await apiClient.request<{ data: GoalsResponse | null; error: ApiErrorLike | null }>(
+      `/goals${buildPatientQuery(patientId)}`
+    );
+
+    if (!response.error && response.data) {
+      setActiveGoals(response.data.active || []);
+      setAchievedGoals(response.data.achieved || []);
+    }
+
+    setLoading(false);
+  }, [patientId, user]);
+
+  useEffect(() => {
+    fetchGoals();
+  }, [fetchGoals]);
+
+  const saveGoal = useCallback(
+    async (payload: {
+      id?: string;
+      goal_type: HealthGoalType;
+      target_value: number;
+      target_direction: GoalDirection;
+      start_date: string;
+      target_date?: string | null;
+    }) => {
+      const path = payload.id ? `/goals/${payload.id}` : "/goals";
+      const method = payload.id ? "PUT" : "POST";
+      const response = await apiClient.request<{ data: HealthGoal | null; error: ApiErrorLike | null }>(path, {
+        method,
+        body: JSON.stringify({
+          ...payload,
+          ...(patientId ? { patientId } : {}),
+        }),
+      });
+
+      if (response.error) {
+        toast.error(response.error.message || "Unable to save goal");
+        return false;
+      }
+
+      toast.success(payload.id ? "Goal updated" : "Goal created");
+      await fetchGoals();
+      return true;
+    },
+    [fetchGoals, patientId]
+  );
+
+  const deactivateGoal = useCallback(
+    async (id: string) => {
+      const response = await apiClient.request<{ data: { success?: boolean } | null; error: ApiErrorLike | null }>(
+        `/goals/${id}${patientId ? `?patientId=${encodeURIComponent(patientId)}` : ""}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (response.error) {
+        toast.error(response.error.message || "Unable to remove goal");
+        return false;
+      }
+
+      toast.success("Goal archived");
+      await fetchGoals();
+      return true;
+    },
+    [fetchGoals, patientId]
+  );
+
+  const checkGoals = useCallback(async () => {
+    const response = await apiClient.request<{ data: HealthGoal[] | null; error: ApiErrorLike | null }>("/goals/check", {
+      method: "POST",
+      body: JSON.stringify(patientId ? { patientId } : {}),
+    });
+
+    if (!response.error) {
+      await fetchGoals();
+    }
+
+    return response.data || [];
+  }, [fetchGoals, patientId]);
+
+  return {
+    activeGoals,
+    achievedGoals,
+    loading,
+    fetchGoals,
+    saveGoal,
+    deactivateGoal,
+    checkGoals,
   };
 }
 

@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { User, Heart, Stethoscope, ChevronRight } from "lucide-react";
 
-export type UserRole = "patient" | "caregiver";
+export type UserRole = "patient" | "caregiver" | "doctor";
 
 interface RoleSelectorProps {
   onSelect: (role: UserRole) => void;
@@ -27,6 +27,15 @@ const roles = [
     icon: Heart,
     color: "hsl(0 72% 58%)",
     gradient: "from-destructive/20 to-destructive/5",
+  },
+  {
+    id: "doctor" as UserRole,
+    title: "Doctor",
+    signupDescription: "Monitor patients, review vitals, update diet plans, and send clinical notes.",
+    loginDescription: "Access your patient list, reports, and doctor notes workspace.",
+    icon: Stethoscope,
+    color: "hsl(217 91% 60%)",
+    gradient: "from-blue-500/20 to-cyan-500/5",
   },
 ];
 

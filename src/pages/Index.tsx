@@ -11,6 +11,8 @@ import { BottomNav } from "@/components/BottomNav";
 import { Icons } from "@/components/icons";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HealthSummaryWidget, PatientDietTab, PatientVitalsTab } from "@/components/PatientHealthSection";
+import { GoalAchievementModal, HealthGoalsOverviewCard, PatientGoalsTab } from "@/components/HealthGoalsSection";
+import { HealthGoal } from "@/hooks/useHealth";
 import { HealthReportExport } from "@/components/HealthReportExport";
 import { PillIcon } from "@/components/PillIcon";
 import { ScheduleSkeleton } from "@/components/ScheduleSkeleton";
@@ -23,12 +25,13 @@ import { useAdherenceStats } from "@/hooks/useDoseLogging";
 import { useDoseLogging } from "@/hooks/useDoseLogging";
 import { formatDistanceToNow, differenceInMinutes } from "date-fns";
 import CaregiverDashboard from "./CaregiverDashboard";
+import DoctorDashboard from "./DoctorDashboard";
 import { cacheKey, readCachedData, writeCachedData } from "@/services/offlineCache";
 
 export default function Index() {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
-  const { role, loading: roleLoading, isCaregiver } = useUserRole();
+  const { role, loading: roleLoading, isCaregiver, isDoctor } = useUserRole();
   const { stats: adherenceStats, loading: adherenceLoading, refresh: refreshAdherence } = useAdherenceStats();
   const { logDose } = useDoseLogging();
   const [medications, setMedications] = useState<Medication[]>([]);
@@ -44,6 +47,9 @@ export default function Index() {
   }>>([]);
   const [lastMissedDate, setLastMissedDate] = useState<Date | null>(null);
   const [dashboardTab, setDashboardTab] = useState("overview");
+  const [celebrationGoal, setCelebrationGoal] = useState<HealthGoal | null>(null);
+  const [doctorNotes, setDoctorNotes] = useState<Array<{ id: string; note: string; doctor_name?: string | null; is_read: boolean; created_at: string }>>([]);
+  const [pendingDoctorInvites, setPendingDoctorInvites] = useState<Array<{ id: string; invite_token: string; doctor_name?: string | null; specialization?: string | null; created_at: string }>>([]);
   const {
     totalCount: interactionCount,
   } = useDrugInteractions(
@@ -66,12 +72,41 @@ export default function Index() {
     if (user) {
       fetchMedications();
       fetchLastMissedDose();
+      fetchDoctorWidgets();
     } else {
       setLoading(false);
       setMedications([]);
       setReminders([]);
     }
   }, [user, authLoading]);
+
+  const fetchDoctorWidgets = async () => {
+    if (!user) return;
+    try {
+      const [notesResponse, invitesResponse] = await Promise.all([
+        apiClient.request<{ data: Array<{ id: string; note: string; doctor_name?: string | null; is_read: boolean; created_at: string }> | null; error: any }>("/patient/doctor-notes"),
+        apiClient.request<{ data: Array<{ id: string; invite_token: string; doctor_name?: string | null; specialization?: string | null; created_at: string }> | null; error: any }>("/doctor/invites/pending"),
+      ]);
+      setDoctorNotes(notesResponse.data || []);
+      setPendingDoctorInvites(invitesResponse.data || []);
+    } catch (error) {
+      console.error("Error fetching doctor widgets:", error);
+    }
+  };
+
+  const acceptDoctorInvite = async (token: string) => {
+    const response = await apiClient.request<{ data: { success: boolean } | null; error: { message?: string } | null }>(`/doctor/accept/${token}`);
+    if (response.error) {
+      return toast.error(response.error.message || "Unable to accept doctor invite.");
+    }
+    toast.success("Doctor invite accepted.");
+    await fetchDoctorWidgets();
+  };
+
+  const markDoctorNotesRead = async () => {
+    await apiClient.request("/patient/doctor-notes/read", { method: "POST" });
+    await fetchDoctorWidgets();
+  };
 
   const fetchLastMissedDose = async () => {
     if (!user) return;
@@ -265,6 +300,9 @@ export default function Index() {
   if (!roleLoading && isCaregiver) {
     return <CaregiverDashboard />;
   }
+  if (!roleLoading && isDoctor) {
+    return <DoctorDashboard />;
+  }
 
   return (
     <div className="min-h-screen bg-gradient-hero pb-24">
@@ -340,10 +378,11 @@ export default function Index() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.12 }}
               >
-                <TabsList className="grid w-full grid-cols-3 rounded-2xl">
+                <TabsList className="grid w-full grid-cols-4 rounded-2xl">
                   <TabsTrigger value="overview">Overview</TabsTrigger>
                   <TabsTrigger value="vitals">Vitals</TabsTrigger>
                   <TabsTrigger value="diet">Diet</TabsTrigger>
+                  <TabsTrigger value="goals">Goals</TabsTrigger>
                 </TabsList>
               </motion.div>
 
@@ -373,12 +412,79 @@ export default function Index() {
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.185 }}
+                >
+                  <HealthGoalsOverviewCard onOpenGoals={() => setDashboardTab("goals")} />
+                </motion.div>
+
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.19 }}
                 >
                   <div className="flex justify-end">
                     <HealthReportExport variant="button" />
                   </div>
                 </motion.div>
+
+                {pendingDoctorInvites.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.195 }}
+                  >
+                    <Card className="border-primary/15">
+                      <CardContent className="space-y-3 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Doctor Invites</p>
+                            <h3 className="text-lg font-bold text-foreground">Pending invitations</h3>
+                          </div>
+                          <Badge variant="status">{pendingDoctorInvites.length}</Badge>
+                        </div>
+                        {pendingDoctorInvites.map((invite) => (
+                          <div key={invite.id} className="rounded-2xl border border-border/60 bg-background/70 p-4">
+                            <p className="font-semibold text-foreground">{invite.doctor_name || "Doctor Invite"}</p>
+                            <p className="text-sm text-muted-foreground">{invite.specialization || "Medical specialist"}</p>
+                            <Button className="mt-3" size="sm" onClick={() => acceptDoctorInvite(invite.invite_token)}>
+                              Accept Invite
+                            </Button>
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                )}
+
+                {doctorNotes.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.198 }}
+                  >
+                    <Card className="border-blue-500/15 bg-gradient-to-br from-blue-500/5 via-background to-background">
+                      <CardContent className="space-y-3 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Notes from Doctor</p>
+                            <h3 className="text-lg font-bold text-foreground">Latest clinical note</h3>
+                          </div>
+                          {doctorNotes.some((note) => !note.is_read) && <Badge variant="status">Unread</Badge>}
+                        </div>
+                        <div className="rounded-2xl border border-blue-500/15 bg-background/80 p-4">
+                          <p className="text-sm font-medium text-foreground">{doctorNotes[0]?.doctor_name || "Doctor"}</p>
+                          <p className="mt-2 text-sm text-muted-foreground">{doctorNotes[0]?.note}</p>
+                          <p className="mt-2 text-xs text-muted-foreground">{formatDistanceToNow(new Date(doctorNotes[0].created_at), { addSuffix: true })}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={markDoctorNotesRead}>
+                            Mark as Read
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                )}
 
                 {/* Enhanced Adherence Overview */}
                 <motion.div
@@ -517,16 +623,30 @@ export default function Index() {
               </TabsContent>
 
               <TabsContent value="vitals">
-                <PatientVitalsTab />
+                <PatientVitalsTab onGoalsAchieved={(goals) => setCelebrationGoal(goals[0] || null)} />
               </TabsContent>
 
               <TabsContent value="diet">
                 <PatientDietTab />
               </TabsContent>
+
+              <TabsContent value="goals">
+                <PatientGoalsTab />
+              </TabsContent>
             </Tabs>
           </>
         )}
       </main>
+
+      <GoalAchievementModal
+        goal={celebrationGoal}
+        open={Boolean(celebrationGoal)}
+        onOpenChange={(open) => !open && setCelebrationGoal(null)}
+        onSetNewGoal={() => {
+          setCelebrationGoal(null);
+          setDashboardTab("goals");
+        }}
+      />
 
       <BottomNav />
     </div>

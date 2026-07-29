@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "server": "node server/index.js",
-    "server:dev": "node --watch server/index.js",
-    "dev:full": "concurrently \"npm run server:dev\" \"npm run dev\"",
+    "server": "cd backend && php artisan serve",
+    "server:dev": "cd backend && php artisan serve",
+    "dev:full": "npm run build:laravel && npm run server",
     "db:init": "node server/init-db.js",
     "build": "vite build",
+    "build:laravel": "vite build && powershell -NoProfile -ExecutionPolicy Bypass -Command \"Copy-Item -Path dist\\* -Destination backend\\public -Recurse -Force\"",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -48,6 +49,7 @@
     "@types/leaflet": "^1.9.21",
     "@zxing/library": "^0.21.3",
     "bcryptjs": "^2.4.3",
+    "canvas-confetti": "^1.9.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

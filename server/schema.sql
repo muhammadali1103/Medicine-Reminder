@@ -162,3 +162,108 @@ CREATE TABLE IF NOT EXISTS diet_log (
   CONSTRAINT fk_diet_log_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_diet_log_plan FOREIGN KEY (diet_plan_id) REFERENCES diet_plans(id)
 );
+
+CREATE TABLE IF NOT EXISTS doctor_profiles (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL UNIQUE,
+  full_name VARCHAR(255) NOT NULL,
+  specialization VARCHAR(255) NULL,
+  license_number VARCHAR(100) NULL,
+  hospital VARCHAR(255) NULL,
+  phone VARCHAR(50) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_doctor_profiles_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS doctor_patient_links (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  doctor_user_id VARCHAR(36) NOT NULL,
+  patient_user_id VARCHAR(36) NOT NULL,
+  status ENUM('pending','active','revoked') DEFAULT 'pending',
+  invite_token VARCHAR(255) UNIQUE NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_doctor_patient (doctor_user_id, patient_user_id),
+  CONSTRAINT fk_doctor_patient_links_doctor FOREIGN KEY (doctor_user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_doctor_patient_links_patient FOREIGN KEY (patient_user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS doctor_notes (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  doctor_user_id VARCHAR(36) NOT NULL,
+  patient_user_id VARCHAR(36) NOT NULL,
+  note TEXT NOT NULL,
+  is_read BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_doctor_notes_doctor FOREIGN KEY (doctor_user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_doctor_notes_patient FOREIGN KEY (patient_user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS health_goals (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL,
+  goal_type ENUM(
+    'bp_systolic','bp_diastolic',
+    'blood_sugar','weight',
+    'heart_rate','medication_adherence',
+    'diet_adherence','water_intake'
+  ) NOT NULL,
+  target_value DECIMAL(8,2) NOT NULL,
+  target_direction ENUM('below','above','exact') NOT NULL DEFAULT 'below',
+  start_date DATE NOT NULL,
+  target_date DATE NULL,
+  is_achieved BOOLEAN DEFAULT FALSE,
+  achieved_at DATETIME NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_health_goals_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS notification_settings (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL UNIQUE,
+  first_reminder_sound VARCHAR(100) DEFAULT 'gentle',
+  second_reminder_sound VARCHAR(100) DEFAULT 'medium',
+  third_reminder_sound VARCHAR(100) DEFAULT 'urgent',
+  snooze_options JSON DEFAULT ('[10,20,30]'),
+  medication_sound_overrides JSON NULL,
+  escalate_to_caregiver BOOLEAN DEFAULT TRUE,
+  escalate_after_minutes INT DEFAULT 30,
+  quiet_hours_start TIME NULL,
+  quiet_hours_end TIME NULL,
+  vibrate_only BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_notification_settings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS notification_logs (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL,
+  medication_id VARCHAR(36) NOT NULL,
+  dose_log_id VARCHAR(36) NOT NULL,
+  reminder_number INT DEFAULT 1,
+  sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  action_taken ENUM('taken','snoozed','dismissed','escalated','ignored') NULL,
+  snooze_minutes INT NULL,
+  action_at TIMESTAMP NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (medication_id) REFERENCES medications(id) ON DELETE CASCADE,
+  FOREIGN KEY (dose_log_id) REFERENCES dose_logs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS caregiver_notifications (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  caregiver_id VARCHAR(36) NOT NULL,
+  patient_id VARCHAR(36) NOT NULL,
+  medication_id VARCHAR(36) NULL,
+  dose_log_id VARCHAR(36) NULL,
+  title VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  type ENUM('escalation','health_alert','missed_dose','system') NOT NULL DEFAULT 'escalation',
+  is_read BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (caregiver_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (medication_id) REFERENCES medications(id) ON DELETE SET NULL,
+  FOREIGN KEY (dose_log_id) REFERENCES dose_logs(id) ON DELETE SET NULL
+);

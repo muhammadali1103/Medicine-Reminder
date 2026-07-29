@@ -263,7 +263,18 @@ export const apiClient = {
     }: {
       email: string;
       password: string;
-      options?: { data?: { full_name?: string | null; role?: string | null } };
+      options?: {
+        data?: {
+          full_name?: string | null;
+          role?: string | null;
+          doctor_profile?: {
+            specialization?: string | null;
+            license_number?: string | null;
+            hospital?: string | null;
+            phone?: string | null;
+          } | null;
+        };
+      };
     }) {
       const response = await apiFetch<{ data?: AuthSession; error?: any }>("/auth/signup", {
         method: "POST",
@@ -272,6 +283,7 @@ export const apiClient = {
           password,
           fullName: options?.data?.full_name || null,
           role: options?.data?.role || localStorage.getItem("selected_role") || "patient",
+          doctorProfile: options?.data?.doctor_profile || null,
         }),
       });
 

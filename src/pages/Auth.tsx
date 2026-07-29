@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { PillIcon } from '@/components/PillIcon';
 import { RoleSelector, UserRole } from '@/components/RoleSelector';
 import { toast } from 'sonner';
-import { Eye, EyeOff, Mail, Lock, User, ArrowRight, Heart, ArrowLeft } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, User, ArrowRight, Heart, ArrowLeft, Stethoscope, Building2, ShieldCheck, Phone } from 'lucide-react';
 import { BiometricPrompt } from '@/components/BiometricPrompt';
 import { BiometricUnlock } from '@/components/BiometricUnlock';
 import {
@@ -34,6 +34,12 @@ export default function Auth() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [doctorFields, setDoctorFields] = useState({
+    specialization: '',
+    licenseNumber: '',
+    hospital: '',
+    phone: '',
+  });
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string; fullName?: string }>({});
@@ -58,11 +64,7 @@ export default function Auth() {
     // Check localStorage for the role selected during login/signup
     const selectedRoleFromStorage = localStorage.getItem("selected_role");
     
-    if (selectedRoleFromStorage === "caregiver") {
-      navigate('/');
-    } else {
-      navigate('/');
-    }
+    navigate('/');
   };
 
   const validateForm = () => {
@@ -115,7 +117,15 @@ export default function Auth() {
           }
         }
       } else {
-        const { error } = await signUp(email, password, fullName);
+        const { error } = await signUp(email, password, fullName, {
+          role: selectedRole || "patient",
+          doctorProfile: selectedRole === "doctor" ? {
+            specialization: doctorFields.specialization,
+            license_number: doctorFields.licenseNumber,
+            hospital: doctorFields.hospital,
+            phone: doctorFields.phone,
+          } : undefined,
+        });
         if (error) {
           if (error.message.includes('User already registered')) {
             toast.error('An account with this email already exists');
@@ -124,10 +134,10 @@ export default function Auth() {
           }
         } else {
           // If signup is for caregiver, we need to add the role
-          if (selectedRole === 'caregiver') {
-            // The user will be created with 'patient' role by default
-            // We need to add caregiver role after signup
-            toast.success('Account created! You can now access the caregiver dashboard.');
+          if (selectedRole === 'doctor') {
+            toast.success('Doctor account created successfully!');
+          } else if (selectedRole === 'caregiver') {
+            toast.success('Caregiver account created successfully!');
           } else {
             toast.success('Account created successfully!');
           }
@@ -261,8 +271,8 @@ export default function Auth() {
                       ? 'Select how you want to sign in'
                       : 'Choose your account type to get started'
                     : isLogin
-                    ? `Sign in as ${selectedRole === 'caregiver' ? 'Caregiver' : 'Patient'}`
-                    : `Create your ${selectedRole === 'caregiver' ? 'Caregiver' : 'Patient'} account`}
+                    ? `Sign in as ${selectedRole === 'caregiver' ? 'Caregiver' : selectedRole === 'doctor' ? 'Doctor' : 'Patient'}`
+                    : `Create your ${selectedRole === 'caregiver' ? 'Caregiver' : selectedRole === 'doctor' ? 'Doctor' : 'Patient'} account`}
                 </CardDescription>
               </div>
             </div>
@@ -319,6 +329,79 @@ export default function Auth() {
                         </motion.div>
                       )}
                     </AnimatePresence>
+
+                    {!isLogin && selectedRole === 'doctor' && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        className="space-y-4 rounded-2xl border border-primary/15 bg-primary/5 p-4"
+                      >
+                        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                          <Stethoscope className="w-4 h-4 text-primary" />
+                          Doctor Profile
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="specialization">Specialization</Label>
+                          <div className="relative">
+                            <Stethoscope className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Input
+                              id="specialization"
+                              value={doctorFields.specialization}
+                              onChange={(e) => setDoctorFields((prev) => ({ ...prev, specialization: e.target.value }))}
+                              placeholder="Cardiology"
+                              className="pl-10"
+                              disabled={isSubmitting}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="licenseNumber">License Number</Label>
+                          <div className="relative">
+                            <ShieldCheck className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Input
+                              id="licenseNumber"
+                              value={doctorFields.licenseNumber}
+                              onChange={(e) => setDoctorFields((prev) => ({ ...prev, licenseNumber: e.target.value }))}
+                              placeholder="MED-12345"
+                              className="pl-10"
+                              disabled={isSubmitting}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="hospital">Hospital</Label>
+                          <div className="relative">
+                            <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Input
+                              id="hospital"
+                              value={doctorFields.hospital}
+                              onChange={(e) => setDoctorFields((prev) => ({ ...prev, hospital: e.target.value }))}
+                              placeholder="City Medical Center"
+                              className="pl-10"
+                              disabled={isSubmitting}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="doctorPhone">Phone</Label>
+                          <div className="relative">
+                            <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Input
+                              id="doctorPhone"
+                              value={doctorFields.phone}
+                              onChange={(e) => setDoctorFields((prev) => ({ ...prev, phone: e.target.value }))}
+                              placeholder="+1 555 123 4567"
+                              className="pl-10"
+                              disabled={isSubmitting}
+                            />
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
 
                     <div className="space-y-2">
                       <Label htmlFor="email">Email</Label>

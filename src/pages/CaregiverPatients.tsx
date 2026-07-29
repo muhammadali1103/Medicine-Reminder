@@ -1,20 +1,22 @@
 import { useState, useEffect, useMemo } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CaregiverBottomNav } from "@/components/CaregiverBottomNav";
 import { AdherenceRing } from "@/components/AdherenceRing";
+import { HealthReportExport } from "@/components/HealthReportExport";
+import { CaregiverHealthPanel } from "@/components/PatientHealthSection";
 import { useAuth } from "@/hooks/useAuth";
 import { useCaregiverLinks } from "@/hooks/useCaregiverLinks";
+import { useUserRole } from "@/hooks/useUserRole";
 import { apiClient } from "@/lib/apiClient";
-import { formatDistanceToNow, format } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
 import {
   Users,
   Pill,
   Clock,
-  Download,
   Eye,
   Search,
   Heart,
@@ -22,9 +24,6 @@ import {
   X,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { jsPDF } from "jspdf";
-import { toast } from "sonner";
-import { useProfile } from "@/hooks/useProfile";
 
 interface PatientData {
   id: string;
@@ -47,15 +46,13 @@ interface PatientData {
 
 export default function CaregiverPatients() {
   const { user } = useAuth();
-  const { profile } = useProfile();
   const { links, loading: linksLoading, acceptLink, rejectLink } = useCaregiverLinks();
+  const { role } = useUserRole();
   const [patients, setPatients] = useState<PatientData[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [downloadingReport, setDownloadingReport] = useState<string | null>(null);
   const [processingInvite, setProcessingInvite] = useState<string | null>(null);
-
-  const caregiverName = profile?.full_name?.split(" ")[0] || "Doctor";
+  const [selectedPatient, setSelectedPatient] = useState<PatientData | null>(null);
 
   const pendingInvitations = useMemo(
     () => links.filter((l) => l.caregiver_id === user?.id && l.status === "pending"),
@@ -159,77 +156,6 @@ export default function CaregiverPatients() {
       case "good": return "Good";
       case "needs-attention": return "Needs Attention";
       case "critical": return "Critical";
-    }
-  };
-
-  const generatePatientReport = async (patient: PatientData) => {
-    setDownloadingReport(patient.id);
-    
-    try {
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 30);
-      
-      const { data: doseLogs } = await apiClient
-        .from("dose_logs")
-        .select("*, medications(name)")
-        .eq("user_id", patient.id)
-        .gte("scheduled_time", weekAgo.toISOString())
-        .order("scheduled_time", { ascending: false });
-
-      const doc = new jsPDF();
-      
-      doc.setFillColor(20, 184, 166);
-      doc.rect(0, 0, 210, 40, "F");
-      
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(22);
-      doc.text("Patient Health Report", 20, 25);
-      
-      doc.setFontSize(10);
-      doc.text(`Generated: ${format(new Date(), "MMMM d, yyyy 'at' h:mm a")}`, 20, 35);
-      
-      doc.setTextColor(30, 41, 59);
-      doc.setFontSize(16);
-      doc.text("Patient Information", 20, 55);
-      
-      doc.setFontSize(11);
-      doc.text(`Name: ${patient.name}`, 20, 65);
-      doc.text(`Active Medications: ${patient.medicationCount}`, 20, 72);
-      doc.text(`Weekly Adherence: ${patient.adherenceScore}%`, 20, 79);
-      doc.text(`Status: ${getStatusLabel(patient.status)}`, 20, 86);
-      
-      doc.setFontSize(16);
-      doc.text("7-Day Adherence Summary", 20, 102);
-      
-      doc.setFontSize(11);
-      doc.text(`Doses Taken: ${patient.recentDoses.taken}`, 20, 112);
-      doc.text(`Doses Missed: ${patient.recentDoses.missed}`, 20, 119);
-      doc.text(`Doses Pending: ${patient.recentDoses.pending}`, 20, 126);
-      
-      doc.setFontSize(16);
-      doc.text("Active Medications", 20, 142);
-      
-      let yPos = 152;
-      patient.medications.forEach((med, idx) => {
-        doc.setFontSize(11);
-        doc.text(`${idx + 1}. ${med.name}`, 20, yPos);
-        doc.setFontSize(9);
-        doc.text(`   Dosage: ${med.dosage} | Schedule: ${med.schedule}`, 20, yPos + 6);
-        yPos += 14;
-      });
-      
-      doc.setFontSize(8);
-      doc.setTextColor(100, 116, 139);
-      doc.text("This report is for informational purposes only.", 20, 280);
-      doc.text(`Prepared by: Dr. ${caregiverName} | Smart Medicine Reminder App`, 20, 286);
-      
-      doc.save(`${patient.name.replace(/\s+/g, "_")}_Health_Report_${format(new Date(), "yyyy-MM-dd")}.pdf`);
-      toast.success("Report downloaded successfully!");
-    } catch (err) {
-      console.error("Error generating report:", err);
-      toast.error("Failed to generate report");
-    } finally {
-      setDownloadingReport(null);
     }
   };
 
@@ -359,7 +285,7 @@ export default function CaregiverPatients() {
             </CardContent>
           </Card>
         ) : (
-          <ScrollArea className="h-[calc(100vh-280px)]">
+          <div className="h-[calc(100vh-280px)] overflow-y-auto">
             <div className="space-y-4 pr-2">
               {filteredPatients.map((patient, index) => (
                 <motion.div
@@ -419,28 +345,132 @@ export default function CaregiverPatients() {
                       </div>
 
                       <div className="border-t border-border p-3 bg-muted/20 flex gap-2">
-                        <Button variant="outline" size="sm" className="flex-1">
+                        <Button variant="outline" size="sm" className="flex-1" onClick={() => setSelectedPatient(patient)}>
                           <Eye className="w-4 h-4 mr-1" />
                           Details
                         </Button>
-                        <Button
-                          size="sm"
+                        <HealthReportExport
+                          variant="button"
+                          patientId={patient.id}
+                          patientName={patient.name}
+                          buttonLabel="Report"
                           className="flex-1 bg-gradient-primary text-primary-foreground hover:brightness-110"
-                          onClick={() => generatePatientReport(patient)}
-                          disabled={downloadingReport === patient.id}
-                        >
-                          <Download className="w-4 h-4 mr-1" />
-                          Report
-                        </Button>
+                        />
                       </div>
                     </CardContent>
                   </Card>
                 </motion.div>
               ))}
             </div>
-          </ScrollArea>
+          </div>
         )}
       </main>
+
+      <AnimatePresence>
+        {selectedPatient && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end justify-center"
+            onClick={() => setSelectedPatient(null)}
+          >
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25 }}
+              className="flex w-full max-w-lg flex-col rounded-t-3xl bg-background max-h-[85vh] overflow-hidden"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="p-4 border-b border-border">
+                <div className="w-12 h-1 bg-muted rounded-full mx-auto mb-4" />
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-xl font-bold text-foreground">{selectedPatient.name}</h2>
+                  <Badge className={getStatusColor(selectedPatient.status)}>
+                    {getStatusLabel(selectedPatient.status)}
+                  </Badge>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto overscroll-contain">
+                <div className="p-4 min-h-0">
+                  <Tabs defaultValue="overview" className="space-y-4">
+                    <TabsList className="grid w-full grid-cols-2 rounded-2xl">
+                      <TabsTrigger value="overview">Overview</TabsTrigger>
+                      <TabsTrigger value="health">Health</TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value="overview" className="space-y-4">
+                      <Card>
+                        <CardContent className="p-4">
+                          <h3 className="font-semibold mb-3 flex items-center gap-2">
+                            <Users className="w-4 h-4 text-primary" />
+                            Weekly Adherence
+                          </h3>
+                          <div className="flex items-center gap-4">
+                            <AdherenceRing percentage={selectedPatient.adherenceScore} size={80} strokeWidth={8} />
+                            <div className="flex-1 space-y-2">
+                              <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Taken</span>
+                                <span className="font-medium text-emerald-600">{selectedPatient.recentDoses.taken}</span>
+                              </div>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Missed</span>
+                                <span className="font-medium text-red-600">{selectedPatient.recentDoses.missed}</span>
+                              </div>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Pending</span>
+                                <span className="font-medium text-slate-600">{selectedPatient.recentDoses.pending}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      <Card>
+                        <CardContent className="p-4">
+                          <h3 className="font-semibold mb-3 flex items-center gap-2">
+                            <Pill className="w-4 h-4 text-primary" />
+                            Medications ({selectedPatient.medications.length})
+                          </h3>
+                          <div className="space-y-3">
+                            {selectedPatient.medications.map((medication, idx) => (
+                              <div key={idx} className="flex items-center justify-between p-3 bg-muted/50 rounded-xl">
+                                <div>
+                                  <p className="font-medium text-foreground">{medication.name}</p>
+                                  <p className="text-xs text-muted-foreground">{medication.dosage}</p>
+                                </div>
+                                <Badge variant="outline" className="text-xs">
+                                  {medication.schedule}
+                                </Badge>
+                              </div>
+                            ))}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </TabsContent>
+
+                    <TabsContent value="health">
+                      <CaregiverHealthPanel patientName={selectedPatient.name} patientId={selectedPatient.id} canManageGoals={role === "doctor"} />
+                    </TabsContent>
+                  </Tabs>
+                </div>
+              </div>
+
+              <div className="border-t border-border p-4">
+                <HealthReportExport
+                  variant="button"
+                  patientId={selectedPatient.id}
+                  patientName={selectedPatient.name}
+                  buttonLabel="Download Full Health Report"
+                  className="w-full bg-gradient-primary text-primary-foreground hover:brightness-110"
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <CaregiverBottomNav />
     </div>

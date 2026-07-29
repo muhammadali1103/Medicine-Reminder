@@ -89,13 +89,15 @@ export function useUserRole() {
     }
   }, [fetchRole]);
 
-  const isCaregiver = role === "caregiver" || role === "doctor";
+  const isCaregiver = role === "caregiver";
+  const isDoctor = role === "doctor";
   const isPatient = role === "patient";
 
   return {
     role,
     loading,
     isCaregiver,
+    isDoctor,
     isPatient,
     updateRole,
     refresh: fetchRole,

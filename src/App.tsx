@@ -25,6 +25,9 @@ import CaregiverDashboard from "./pages/CaregiverDashboard";
 import CaregiverPatients from "./pages/CaregiverPatients";
 import CaregiverNotifications from "./pages/CaregiverNotifications";
 import CaregiverReports from "./pages/CaregiverReports";
+import DoctorDashboard from "./pages/DoctorDashboard";
+import DoctorPatientView from "./pages/DoctorPatientView";
+import DoctorInviteAccept from "./pages/DoctorInviteAccept";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -61,6 +64,9 @@ function AppContent() {
       <Route path="/caregiver/patients" element={<ProtectedRoute><CaregiverPatients /></ProtectedRoute>} />
       <Route path="/caregiver/notifications" element={<ProtectedRoute><CaregiverNotifications /></ProtectedRoute>} />
       <Route path="/caregiver/reports" element={<ProtectedRoute><CaregiverReports /></ProtectedRoute>} />
+      <Route path="/doctor" element={<ProtectedRoute><DoctorDashboard /></ProtectedRoute>} />
+      <Route path="/doctor/patient/:patientId" element={<ProtectedRoute><DoctorPatientView /></ProtectedRoute>} />
+      <Route path="/doctor/accept/:token" element={<ProtectedRoute><DoctorInviteAccept /></ProtectedRoute>} />
       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
       <Route path="*" element={<NotFound />} />
     </Routes>

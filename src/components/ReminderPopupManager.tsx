@@ -1,220 +1,285 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { format, isBefore, parseISO } from "date-fns";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
-import { useMedications } from "@/hooks/useMedications";
 import { useProfile } from "@/hooks/useProfile";
 import { useDoseLogging } from "@/hooks/useDoseLogging";
-import { useVoiceReminder } from "@/hooks/useVoiceReminder";
-import { Icons } from "@/components/icons";
+import { MedicationReminder } from "@/components/MedicationReminder";
+import {
+  createNotificationEngine,
+  escalateDoseReminder,
+  logNotificationAction,
+  PendingReminder,
+  playReminderSound,
+  ReminderSound,
+  showBrowserNotification,
+  snoozeDoseReminder,
+} from "@/services/notificationEngine";
 import { toast } from "sonner";
 
-interface ActiveReminder {
-  key: string;
-  medicationId: string;
+interface SnoozeNotice {
+  doseLogId: string;
   medicationName: string;
-  dosage: string;
-  scheduledTime: Date;
-}
-
-const STORAGE_PREFIX = "builtin-reminder";
-
-function getReminderKey(userId: string, medicationId: string, dateKey: string, time: string) {
-  return `${STORAGE_PREFIX}:${userId}:${medicationId}:${dateKey}:${time}`;
-}
-
-function readReminderState(key: string): { handled?: boolean; snoozedUntil?: string } {
-  const raw = localStorage.getItem(key);
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-function writeReminderState(key: string, value: { handled?: boolean; snoozedUntil?: string | null }) {
-  localStorage.setItem(key, JSON.stringify(value));
+  snoozeMinutes: number;
+  snoozedUntil: string;
 }
 
 export function ReminderPopupManager() {
   const { user } = useAuth();
-  const { medications } = useMedications();
   const { profile } = useProfile();
-  const { logDose } = useDoseLogging();
-  const { enabled: voiceEnabled, speak } = useVoiceReminder();
-  const [activeReminder, setActiveReminder] = useState<ActiveReminder | null>(null);
-  const announcedReminderKeyRef = useRef<string | null>(null);
+  const { updateDoseStatus } = useDoseLogging();
+  const [queue, setQueue] = useState<PendingReminder[]>([]);
+  const [snoozeSelection, setSnoozeSelection] = useState("10");
+  const [snoozeNotice, setSnoozeNotice] = useState<SnoozeNotice | null>(null);
+  const [timeLeftLabel, setTimeLeftLabel] = useState("");
+  const engineRef = useRef<ReturnType<typeof createNotificationEngine> | null>(null);
+  const escalatedDoseIdsRef = useRef<Set<string>>(new Set());
 
   const enabled = useMemo(() => profile?.consent_notifications !== false, [profile?.consent_notifications]);
+  const activeReminder = queue[0] || null;
+
+  const removeReminder = (notificationLogId: string) => {
+    setQueue((prev) => prev.filter((item) => item.notification_log_id !== notificationLogId));
+  };
+
+  const pushReminder = async (reminder: PendingReminder) => {
+    setQueue((prev) => {
+      if (prev.some((item) => item.notification_log_id === reminder.notification_log_id)) {
+        return prev;
+      }
+
+      return [...prev, reminder].sort((a, b) => {
+        if (b.reminder_number !== a.reminder_number) {
+          return b.reminder_number - a.reminder_number;
+        }
+        return new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime();
+      });
+    });
+
+    await playReminderSound(reminder.sound as ReminderSound, reminder.vibrate_only);
+    showBrowserNotification(reminder);
+
+    if (reminder.reminder_number === 1) {
+      toast("Medicine time", {
+        description: `Take ${reminder.medication_name} ${reminder.dosage} now.`,
+        duration: 6000,
+      });
+    } else if (reminder.reminder_number === 2) {
+      toast.warning(`You still have not taken ${reminder.medication_name}.`, {
+        duration: 10000,
+      });
+    } else {
+      toast.error(`${reminder.medication_name} is now urgent.`, {
+        duration: 12000,
+      });
+    }
+  };
 
   useEffect(() => {
-    if (!user || !enabled || activeReminder) {
+    if (!user || !enabled) {
+      engineRef.current?.stop();
+      engineRef.current = null;
+      setQueue([]);
       return;
     }
 
-    const checkReminders = () => {
-      const now = new Date();
-      const todayKey = format(now, "yyyy-MM-dd");
+    const engine = createNotificationEngine({
+      onReminder: (reminder) => {
+        void pushReminder(reminder);
+      },
+    });
 
-      for (const med of medications) {
-        if (!med.is_active) {
-          continue;
-        }
+    engineRef.current = engine;
+    engine.start();
 
-        const startDate = med.start_date ? parseISO(med.start_date) : null;
-        const endDate = med.end_date ? parseISO(med.end_date) : null;
+    return () => {
+      engine.stop();
+      engineRef.current = null;
+    };
+  }, [enabled, user]);
 
-        if (startDate && isBefore(now, startDate)) {
-          continue;
-        }
-        if (endDate && isBefore(endDate, now)) {
-          continue;
-        }
+  useEffect(() => {
+    if (!activeReminder) {
+      return;
+    }
 
-        const schedule = med.schedule as { times?: string[] } | null;
-        const times = schedule?.times || ["08:00"];
+    const defaultSnooze = activeReminder.snooze_options?.[0] || 10;
+    setSnoozeSelection(String(defaultSnooze));
+  }, [activeReminder?.notification_log_id]);
 
-        for (const time of times) {
-          const reminderKey = getReminderKey(user.id, med.id, todayKey, time);
-          const stored = readReminderState(reminderKey);
-          if (stored.handled) {
-            continue;
-          }
+  useEffect(() => {
+    if (!activeReminder || activeReminder.reminder_number !== 1) {
+      return;
+    }
 
-          const [hours, minutes] = time.split(":").map(Number);
-          const scheduledTime = new Date(now);
-          scheduledTime.setHours(hours, minutes, 0, 0);
-
-          const triggerTime = stored.snoozedUntil ? new Date(stored.snoozedUntil) : scheduledTime;
-          const diff = now.getTime() - triggerTime.getTime();
-
-          if (diff >= 0 && diff < 60 * 1000) {
-            setActiveReminder({
-              key: reminderKey,
-              medicationId: med.id,
-              medicationName: med.name,
-              dosage: med.dosage || "1 dose",
-              scheduledTime,
-            });
-            return;
-          }
-        }
+    const timeoutId = window.setTimeout(() => {
+      removeReminder(activeReminder.notification_log_id);
+      if (user) {
+        void logNotificationAction(user.id, activeReminder, "ignored");
       }
+    }, 60 * 1000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [activeReminder, user]);
+
+  useEffect(() => {
+    if (!activeReminder || activeReminder.reminder_number !== 3 || escalatedDoseIdsRef.current.has(activeReminder.dose_log_id)) {
+      return;
+    }
+
+    escalatedDoseIdsRef.current.add(activeReminder.dose_log_id);
+    void escalateDoseReminder(activeReminder.dose_log_id).then((response) => {
+      if (response.error) {
+        toast.error(response.error.message || "Failed to alert caregiver.");
+        return;
+      }
+
+      if (response.data?.caregiver_count) {
+        toast.warning(`Caregiver notified for ${activeReminder.medication_name}.`);
+      }
+    });
+  }, [activeReminder]);
+
+  useEffect(() => {
+    if (!snoozeNotice) {
+      setTimeLeftLabel("");
+      return;
+    }
+
+    const updateCountdown = () => {
+      const diff = new Date(snoozeNotice.snoozedUntil).getTime() - Date.now();
+      if (diff <= 0) {
+        setSnoozeNotice(null);
+        setTimeLeftLabel("");
+        void engineRef.current?.refresh();
+        return;
+      }
+
+      const minutes = Math.floor(diff / 60000);
+      const seconds = Math.floor((diff % 60000) / 1000);
+      setTimeLeftLabel(`${minutes}:${String(seconds).padStart(2, "0")}`);
     };
 
-    checkReminders();
-    const intervalId = window.setInterval(checkReminders, 15000);
+    updateCountdown();
+    const intervalId = window.setInterval(updateCountdown, 1000);
     return () => window.clearInterval(intervalId);
-  }, [activeReminder, enabled, medications, user]);
-
-  useEffect(() => {
-    if (!activeReminder || announcedReminderKeyRef.current === activeReminder.key) {
-      return;
-    }
-
-    announcedReminderKeyRef.current = activeReminder.key;
-
-    toast("Medicine time", {
-      description: `Take ${activeReminder.medicationName} ${activeReminder.dosage} now.`,
-      duration: 12000,
-    });
-
-    if (!voiceEnabled) {
-      return;
-    }
-
-    void speak({
-      medicationName: activeReminder.medicationName,
-      dosage: activeReminder.dosage,
-    }).then((success) => {
-      if (!success) {
-        toast.error("Voice reminder could not be played.");
-      }
-    });
-  }, [activeReminder, speak, voiceEnabled]);
-
-  const closeAndMarkHandled = () => {
-    if (!activeReminder) {
-      return;
-    }
-
-    writeReminderState(activeReminder.key, { handled: true, snoozedUntil: null });
-    setActiveReminder(null);
-  };
+  }, [snoozeNotice]);
 
   const handleTakeNow = async () => {
-    if (!activeReminder) {
+    if (!user || !activeReminder) {
       return;
     }
 
-    await logDose(activeReminder.medicationId, activeReminder.scheduledTime, "taken");
-    writeReminderState(activeReminder.key, { handled: true, snoozedUntil: null });
-    setActiveReminder(null);
-    toast.success(`${activeReminder.medicationName} marked as taken.`);
+    const success = await updateDoseStatus(activeReminder.dose_log_id, "taken");
+    if (!success) {
+      toast.error("Failed to mark dose as taken.");
+      return;
+    }
+
+    await playReminderSound("success", false);
+    await logNotificationAction(user.id, activeReminder, "taken");
+    removeReminder(activeReminder.notification_log_id);
+    toast.success(`${activeReminder.medication_name} marked as taken.`);
   };
 
-  const handleSnooze = () => {
+  const handleSnooze = async () => {
     if (!activeReminder) {
       return;
     }
 
-    const snoozedUntil = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    writeReminderState(activeReminder.key, { handled: false, snoozedUntil });
-    setActiveReminder(null);
-    toast.info(`Reminder snoozed until ${format(new Date(snoozedUntil), "h:mm a")}.`);
+    const minutes = Number(snoozeSelection);
+    const response = await snoozeDoseReminder(activeReminder.dose_log_id, minutes);
+
+    if (response.error || !response.data) {
+      toast.error(response.error?.message || "Unable to snooze reminder.");
+      return;
+    }
+
+    setSnoozeNotice({
+      doseLogId: activeReminder.dose_log_id,
+      medicationName: activeReminder.medication_name,
+      snoozeMinutes: response.data.snooze_minutes,
+      snoozedUntil: response.data.snoozed_until,
+    });
+    removeReminder(activeReminder.notification_log_id);
+    toast.info(`${activeReminder.medication_name} snoozed for ${response.data.snooze_minutes} minutes.`);
+  };
+
+  const handleSkip = async () => {
+    if (!user || !activeReminder) {
+      return;
+    }
+
+    const success = await updateDoseStatus(activeReminder.dose_log_id, "skipped");
+    if (!success) {
+      toast.error("Failed to skip this dose.");
+      return;
+    }
+
+    await logNotificationAction(user.id, activeReminder, "dismissed");
+    removeReminder(activeReminder.notification_log_id);
+    toast.message(`${activeReminder.medication_name} skipped.`);
+  };
+
+  const handleMarkMissed = async () => {
+    if (!user || !activeReminder) {
+      return;
+    }
+
+    const success = await updateDoseStatus(activeReminder.dose_log_id, "missed");
+    if (!success) {
+      toast.error("Failed to mark this dose as missed.");
+      return;
+    }
+
+    await logNotificationAction(user.id, activeReminder, "ignored");
+    removeReminder(activeReminder.notification_log_id);
+    toast.error(`${activeReminder.medication_name} marked as missed.`);
   };
 
   return (
-    <Dialog open={!!activeReminder} onOpenChange={(open) => !open && closeAndMarkHandled()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Icons.bell className="h-5 w-5 text-primary animate-pulse" />
-            Medication Reminder
-          </DialogTitle>
-          <DialogDescription>
-            Your medicine time has arrived. Please take {activeReminder?.medicationName} {activeReminder?.dosage} now.
-          </DialogDescription>
-        </DialogHeader>
-
-        {activeReminder && (
-          <div className="space-y-4">
-            <div className="rounded-xl bg-primary/5 border border-primary/15 p-4">
-              <p className="font-semibold text-foreground">{activeReminder.medicationName}</p>
-              <p className="text-sm text-muted-foreground">{activeReminder.dosage}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Scheduled for {format(activeReminder.scheduledTime, "h:mm a")}
+    <>
+      {snoozeNotice && (
+        <div className="fixed left-4 top-4 z-[75] max-w-sm rounded-2xl border border-primary/20 bg-background/95 p-4 shadow-lg backdrop-blur">
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl bg-primary/10 p-2 text-primary">
+              <span className="text-lg">💊</span>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-foreground">
+                {snoozeNotice.medicationName} snoozed
               </p>
+              <p className="text-xs text-muted-foreground">
+                Reminder returns in {snoozeNotice.snoozeMinutes} minutes.
+              </p>
+              <div className="mt-2 flex items-center gap-2">
+                <Badge variant="status">Countdown {timeLeftLabel}</Badge>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => void engineRef.current?.refresh()}
+                >
+                  Check now
+                </Button>
+              </div>
             </div>
-
-            <div className="flex gap-2">
-              <Button className="flex-1" variant="success" onClick={handleTakeNow}>
-                <Icons.checkCircle className="h-4 w-4 mr-2" />
-                Take Now
-              </Button>
-              <Button className="flex-1" variant="outline" onClick={handleSnooze}>
-                <Icons.timer className="h-4 w-4 mr-2" />
-                Snooze 10 Min
-              </Button>
-            </div>
-
-            <Button className="w-full" variant="ghost" onClick={closeAndMarkHandled}>
-              Dismiss
-            </Button>
           </div>
-        )}
-      </DialogContent>
-    </Dialog>
+        </div>
+      )}
+
+      {activeReminder && (
+        <MedicationReminder
+          reminder={activeReminder}
+          snoozeSelection={snoozeSelection}
+          onSnoozeSelectionChange={setSnoozeSelection}
+          onTakeNow={handleTakeNow}
+          onSnooze={handleSnooze}
+          onSkip={handleSkip}
+          onMarkMissed={handleMarkMissed}
+        />
+      )}
+    </>
   );
 }

@@ -22,7 +22,7 @@ import {
 
 interface Notification {
   id: string;
-  type: "invitation" | "missed_dose" | "low_adherence" | "alert" | "health_alert";
+  type: "invitation" | "missed_dose" | "low_adherence" | "alert" | "health_alert" | "escalation";
   message: string;
   patientName: string;
   patientId?: string;
@@ -62,6 +62,25 @@ export default function CaregiverNotifications() {
       }
 
       const newNotifications: Notification[] = [];
+
+      const { data: escalationNotifications } = await apiClient
+        .from("caregiver_notifications")
+        .select("*")
+        .eq("caregiver_id", user.id)
+        .order("created_at", { ascending: false });
+
+      for (const alert of escalationNotifications || []) {
+        const patientLink = activePatientLinks.find((link) => link.patient_id === alert.patient_id);
+        newNotifications.push({
+          id: `escalation-${alert.id}`,
+          type: "escalation",
+          message: alert.message,
+          patientName: patientLink?.patient_profile?.full_name || "Patient",
+          patientId: alert.patient_id,
+          timestamp: new Date(alert.created_at),
+          read: Boolean(alert.is_read),
+        });
+      }
 
       // Add invitation notifications
       for (const inv of pendingInvitations) {
@@ -163,6 +182,7 @@ export default function CaregiverNotifications() {
       case "missed_dose": return AlertTriangle;
       case "low_adherence": return TrendingDown;
       case "health_alert": return AlertTriangle;
+      case "escalation": return AlertTriangle;
       default: return Bell;
     }
   };
@@ -173,6 +193,7 @@ export default function CaregiverNotifications() {
       case "missed_dose": return "text-red-500 bg-red-500/10";
       case "low_adherence": return "text-amber-500 bg-amber-500/10";
       case "health_alert": return "text-red-500 bg-red-500/10";
+      case "escalation": return "text-red-500 bg-red-500/10";
       default: return "text-primary bg-primary/10";
     }
   };
